@@ -1,3 +1,7 @@
+"""The javascript source for the Kindle API
+"""
+
+API_SCRIPT = """
 var KindleBookMetadata = function(title, authors, asin) {
     return {
         title: title,
@@ -202,3 +206,4 @@ var KindleAPI = (function() {
         get_library_metadata: get_library_metadata
     };
 })();
+"""

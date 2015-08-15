@@ -1,11 +1,9 @@
 """Scrape Kindle Cloud Reader for information regarding the Kindle Library and
 current reading progress.
 """
-from credential_mgr import JSONCredentialManager
+from .api import API_SCRIPT
 
-import sys
 import os
-from getpass import getuser
 from textwrap import dedent
 from contextlib import contextmanager
 
@@ -14,9 +12,6 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver import Firefox, ActionChains
 from selenium.common.exceptions import NoSuchElementException,\
                                         ElementNotVisibleException
-
-
-API_SCRIPT_PATH = 'kindle_api.js'
 
 
 class ConnectionError(Exception):
@@ -147,10 +142,8 @@ class KindleCloudReaderAPI(object):
     """An interface for extracting data from Kindle Cloud Reader
 
     Args:
-        amz_login_credentials_path: The system path to a JSON file containing
-            two keys:
-                id: The email address associated with the Kindle account
-                secret: The password associated with the Kindle account
+        username: The email address associated with the Kindle account
+        password: The password associated with the Kindle account
         profile_path: The path to the Firefox profile directory to use for
             browsing. This enables existing cookies and add-ons to be used in
             the automation.
@@ -158,7 +151,7 @@ class KindleCloudReaderAPI(object):
     CLOUD_READER_URL = u'https://read.amazon.com'
     SIGNIN_URL = u'https://www.amazon.com/ap/signin'
 
-    def __init__(self, amz_login_credentials_path, profile_path=None):
+    def __init__(self, username, password, profile_path=None):
         if profile_path is not None:
             profile = FirefoxProfile(profile_path)
         else:
@@ -169,10 +162,9 @@ class KindleCloudReaderAPI(object):
                 timeout=10,
                 ignored_exceptions=(NoSuchElementException,
                     ElementNotVisibleException))
-        self._manager = JSONCredentialManager(amz_login_credentials_path)
+        self._uname = username
+        self._pword = password
         self._action = ActionChains(self._browser)
-        with open(API_SCRIPT_PATH, 'r') as api_script_file:
-            self._api_script = api_script_file.read()
 
     def _to_reader_home(self):
         """Navigate to the Cloud Reader library page
@@ -203,9 +195,8 @@ class KindleCloudReaderAPI(object):
         if not self._browser.current_url.startswith(KindleCloudReaderAPI.SIGNIN_URL):
             raise RuntimeError('current url "%s" is not a signin url ("%s")' %
                     (self._browser.current_url, KindleCloudReaderAPI.SIGNIN_URL))
-        uname, pword = self._manager.get_creds()
-        self._browser.find_element_by_id('ap_email').send_keys(uname)
-        self._browser.find_element_by_id('ap_password').send_keys(pword)
+        self._browser.find_element_by_id('ap_email').send_keys(self._uname)
+        self._browser.find_element_by_id('ap_password').send_keys(self._pword)
         self._browser.find_element_by_id('signInSubmit-input').click()
 
     def _switch_to_frame(self, frame_id):
@@ -240,11 +231,11 @@ class KindleCloudReaderAPI(object):
             KindleAPI.%(api_call)s(%(args)s).done(function(a) {
                 done(a);
         });
-        """) % {'api_script': self._api_script,
+        """) % {'api_script': API_SCRIPT,
                 'api_call': function_name,
                 'args': ', '.join(args)
                 }
-        script = '\n'.join((self._api_script, api_call))
+        script = '\n'.join((API_SCRIPT, api_call))
         return self._browser.execute_async_script(script)
 
     @staticmethod
