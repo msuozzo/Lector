@@ -151,12 +151,8 @@ class KindleCloudReaderAPI(object):
     CLOUD_READER_URL = u'https://read.amazon.com'
     SIGNIN_URL = u'https://www.amazon.com/ap/signin'
 
-    def __init__(self, username, password, profile_path=None):
-        if profile_path is not None:
-            profile = FirefoxProfile(profile_path)
-        else:
-            profile = None
-        self._browser = Firefox(firefox_profile=profile)
+    def __init__(self, username, password):
+        self._browser = Firefox()
         self._browser.set_script_timeout(10)
         self._wait = WebDriverWait(self._browser,
                 timeout=10,
