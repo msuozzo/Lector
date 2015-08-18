@@ -3,13 +3,12 @@ current reading progress.
 """
 from .api import API_SCRIPT
 
-import os
 from textwrap import dedent
 from contextlib import contextmanager
 
-from selenium.webdriver.firefox.firefox_profile import FirefoxProfile
 from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver import Firefox, ActionChains
+from selenium.webdriver import PhantomJS, ActionChains
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.common.exceptions import NoSuchElementException,\
                                         ElementNotVisibleException
 
@@ -152,7 +151,16 @@ class KindleCloudReaderAPI(object):
     SIGNIN_URL = u'https://www.amazon.com/ap/signin'
 
     def __init__(self, username, password):
-        self._browser = Firefox()
+        # Kindle Cloud Reader does not broadcast support for PhantomJS
+        # This is easily fixed by modifying the User Agent
+        dcap = dict(DesiredCapabilities.PHANTOMJS)
+        dcap["phantomjs.page.settings.userAgent"] = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_4) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/44.0.2403.155 Safari/537.36"
+            )
+        self._browser = PhantomJS(desired_capabilities=dcap)
+        self._browser.set_window_size(1920, 1080)
         self._browser.set_script_timeout(10)
         self._wait = WebDriverWait(self._browser,
                 timeout=10,
@@ -183,7 +191,7 @@ class KindleCloudReaderAPI(object):
         if self._browser.title == u'Amazon.com Sign In':
             self._login()
 
-        assert self._browser.title == u'Kindle Cloud Reader'
+        self._wait.until(lambda br: br.title == u'Kindle Cloud Reader')
 
     def _login(self):
         """Log in to Kindle Cloud Reader
@@ -209,6 +217,12 @@ class KindleCloudReaderAPI(object):
         arguments `*args`
         """
         self._switch_to_frame('KindleReaderIFrame')
+
+        # NOTE: Prevents a page unload from interfering with the subsequent
+        # asynch script call
+        self._wait.until(lambda br:
+                br.find_elements_by_id('kindleReader_header'))
+
         # Wait until the books have been loaded
         self._wait.until(lambda br: br.execute_async_script(
             ur"""
@@ -221,6 +235,7 @@ class KindleCloudReaderAPI(object):
                 .getAllBooks()
                 .done(function(books) { done(!!books.length); });
             """))
+
         api_call = dedent("""
             var done = arguments[0];
             %(api_script)s
