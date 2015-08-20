@@ -6,11 +6,22 @@ from .api import API_SCRIPT
 from textwrap import dedent
 from contextlib import contextmanager
 
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver import PhantomJS, ActionChains
+from selenium.webdriver import PhantomJS
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-from selenium.common.exceptions import NoSuchElementException,\
-                                        ElementNotVisibleException
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.common.exceptions import TimeoutException
+
+
+class KindleAPIError(Exception):
+    """Indicate a problem with the API
+    """
+    pass
+
+
+class InitError(Exception):
+    """Indicate a problem with the initialization of the browser
+    """
+    pass
 
 
 class ConnectionError(Exception):
@@ -151,24 +162,41 @@ class KindleCloudReaderAPI(object):
     SIGNIN_URL = u'https://www.amazon.com/ap/signin'
 
     def __init__(self, username, password):
+        self._uname = username
+        self._pword = password
+
+        self._browser = None
+        self._init_browser()
+
+    def _wait(self, timeout=10):
+        """Return a `WebDriverWait` instance for the current browser with the
+        timeout set to the `timeout` parameter
+        """
+        return WebDriverWait(self._browser, timeout=timeout)
+
+    def _init_browser(self):
+        """Create
+        """
+        self._create_browser()
+        self._to_reader_home()
+        self._to_reader_frame()
+        self._wait_for_js()
+
+    def _create_browser(self):
+        """Create a new instance of the driver in use
+        """
         # Kindle Cloud Reader does not broadcast support for PhantomJS
         # This is easily fixed by modifying the User Agent
-        dcap = dict(DesiredCapabilities.PHANTOMJS)
+        dcap = DesiredCapabilities.PHANTOMJS.copy()
         dcap["phantomjs.page.settings.userAgent"] = (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_4) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/44.0.2403.155 Safari/537.36"
             )
-        self._browser = PhantomJS(desired_capabilities=dcap)
+        self._browser = PhantomJS(desired_capabilities=dcap,
+                                service_args=['--disk-cache=false'])
         self._browser.set_window_size(1920, 1080)
-        self._browser.set_script_timeout(10)
-        self._wait = WebDriverWait(self._browser,
-                timeout=10,
-                ignored_exceptions=(NoSuchElementException,
-                    ElementNotVisibleException))
-        self._uname = username
-        self._pword = password
-        self._action = ActionChains(self._browser)
+        self._browser.set_script_timeout(5)
 
     def _to_reader_home(self):
         """Navigate to the Cloud Reader library page
@@ -185,69 +213,98 @@ class KindleCloudReaderAPI(object):
         login_or_reader_loaded = \
                 lambda br: br.find_elements_by_id('amzn_kcr') or \
                     br.find_elements_by_id('KindleLibraryIFrame')
-        self._wait.until(login_or_reader_loaded)
+        self._wait().until(login_or_reader_loaded)
 
-        # If the login page was loaded, log in
-        if self._browser.title == u'Amazon.com Sign In':
+        try:
+            self._wait(2).until(lambda br: br.title == u'Amazon.com Sign In')
+        except TimeoutException:
+            return
+        else:
             self._login()
 
-        self._wait.until(lambda br: br.title == u'Kindle Cloud Reader')
-
-    def _login(self):
+    def _login(self, max_tries=2):
         """Log in to Kindle Cloud Reader
         """
         if not self._browser.current_url.startswith(KindleCloudReaderAPI.SIGNIN_URL):
             raise RuntimeError('current url "%s" is not a signin url ("%s")' %
                     (self._browser.current_url, KindleCloudReaderAPI.SIGNIN_URL))
-        self._browser.find_element_by_id('ap_email').send_keys(self._uname)
-        self._browser.find_element_by_id('ap_password').send_keys(self._pword)
-        self._browser.find_element_by_id('signInSubmit-input').click()
+        self._wait().until(lambda br: br.find_elements_by_id('ap_email'))
+        tries = 0
+        while tries < max_tries:
+            email_elem = self._browser.find_element_by_id('ap_email')
+            pword_elem = self._browser.find_element_by_id('ap_password')
+            email_elem.clear()
+            pword_elem.clear()
+            email_elem.send_keys(self._uname)
+            pword_elem.send_keys(self._pword)
+            def creds_entered(_):
+                """Return whether the credentials were properly entered into
+                the email and password fields.
+                """
+                email_ok = email_elem.get_attribute('value') == self._uname
+                pword_ok = pword_elem.get_attribute('value') == self._pword
+                return email_ok and pword_ok
+            try:
+                self._wait(2).until(creds_entered)
+                self._browser.find_element_by_id('signInSubmit-input').click()
+                self._wait(2).until(lambda br: br.title == u'Kindle Cloud Reader')
+            except TimeoutException:
+                tries += 1
+            else:
+                break
 
-    def _switch_to_frame(self, frame_id):
-        """Switch the browser focus to the iframe with id `frame_id`
-
-        Args:
-            frame_id: The id string attached to the frame
+    def _to_reader_frame(self):
+        """Navigate to the KindleReader iframe
         """
-        self._wait.until(lambda br: br.find_element_by_id(frame_id))
-        self._browser.switch_to.frame(frame_id)  #pylint: disable=no-member
+        reader_frame = 'KindleReaderIFrame'
+        self._wait().until(lambda br: br.find_elements_by_id(reader_frame))
+        self._browser.switch_to.frame(reader_frame)  #pylint: disable=no-member
+        self._wait().until(lambda br:
+                br.find_elements_by_id('kindleReader_header'))
+
+    def _wait_for_js(self):
+        """Wait for the Kindle Cloud Reader js to initialize the modules we
+        need for API queries
+        """
+        self._wait(2).until(lambda br:
+                br.execute_script(ur"""
+            return window.hasOwnProperty('KindleModuleManager');
+                """))
+        self._wait(2).until(lambda br:
+                br.execute_async_script(ur"""
+            var done = arguments[0];
+            if (!window.hasOwnProperty('KindleModuleManager') ||
+                !KindleModuleManager
+                    .isModuleInitialized(Kindle.MODULE.DB_CLIENT)) {
+                done(false);
+            } else {
+                KindleModuleManager
+                    .getModuleSync(Kindle.MODULE.DB_CLIENT)
+                    .getAppDb()
+                    .getAllBooks()
+                    .done(function(books) { done(!!books.length); });
+            }
+            """))
 
     def _get_api_call(self, function_name, *args):
         """Runs the api call `function_name` with the javascript-formatted
         arguments `*args`
         """
-        self._switch_to_frame('KindleReaderIFrame')
-
-        # NOTE: Prevents a page unload from interfering with the subsequent
-        # asynch script call
-        self._wait.until(lambda br:
-                br.find_elements_by_id('kindleReader_header'))
-
-        # Wait until the books have been loaded
-        self._wait.until(lambda br: br.execute_async_script(
-            ur"""
-            var done = arguments[0];
-            KindleModuleManager
-                .isModuleInitialized(Kindle.MODULE.DB_CLIENT) &&
-            KindleModuleManager
-                .getModuleSync(Kindle.MODULE.DB_CLIENT)
-                .getAppDb()
-                .getAllBooks()
-                .done(function(books) { done(!!books.length); });
-            """))
-
         api_call = dedent("""
             var done = arguments[0];
-            %(api_script)s
-            KindleAPI.%(api_call)s(%(args)s).done(function(a) {
+            KindleAPI.%(api_call)s(%(args)s).always(function(a) {
                 done(a);
-        });
+            });
         """) % {'api_script': API_SCRIPT,
                 'api_call': function_name,
                 'args': ', '.join(args)
                 }
         script = '\n'.join((API_SCRIPT, api_call))
-        return self._browser.execute_async_script(script)
+        try:
+            return self._browser.execute_async_script(script)
+        except TimeoutException:
+            #FIXME: KCR will occassionally not load library and fall over
+            raise KindleAPIError('')
 
     @staticmethod
     def _kbm_to_book(kbm):
@@ -269,7 +326,6 @@ class KindleCloudReaderAPI(object):
         Returns:
             A `KindleBook` object
         """
-        self._to_reader_home()
         kbm = self._get_api_call('get_book_metadata', asin)
         return KindleCloudReaderAPI._kbm_to_book(kbm)
 
@@ -279,7 +335,6 @@ class KindleCloudReaderAPI(object):
         Returns:
             A list of `KindleBook` objects
         """
-        self._to_reader_home()
         return map(KindleCloudReaderAPI._kbm_to_book,
                 self._get_api_call('get_library_metadata'))
 
@@ -291,14 +346,12 @@ class KindleCloudReaderAPI(object):
         Args:
             read_cb: The callback to open the reader for the target book
         """
-        self._to_reader_home()
         kbp = self._get_api_call('get_book_progress', asin)
         return KindleCloudReaderAPI._kbp_to_progress(kbp)
 
     def get_library_progress(self):
         """Return a dictionary mapping the `ReadingProgress`
         """
-        self._to_reader_home()
         kbp_dict = self._get_api_call('get_library_progress')
         return {asin: KindleCloudReaderAPI._kbp_to_progress(kbp)
                 for asin, kbp in kbp_dict.iteritems()}
