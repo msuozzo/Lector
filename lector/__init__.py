@@ -1,5 +1,5 @@
 """
-kindle_api
+Lector
 ~~~~~~~~~~
 
 Interface for Amazon Kindle Data

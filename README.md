@@ -1,5 +1,5 @@
-# kindle\_api
-An API for your Kindle data
+# Lector
+An API for your Kindle data.
 
 Python bindings are provided but any language that can run the javascript
 found in `api.py` from within a Kindle Cloud Reader session may easily access
