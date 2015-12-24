@@ -8,8 +8,6 @@ try:
 except ImportError:
     from distutils.core import setup
 
-from setuptools import setup
-
 
 def open_(fname, *args, **kwargs):
     return open(os.path.join(os.path.dirname(__file__), fname), *args, **kwargs)
