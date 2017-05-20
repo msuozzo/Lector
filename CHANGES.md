@@ -1,5 +1,9 @@
 # Revision History
 
+## 0.0.3 (2017/08/20)
+
+ - Add exports to \_\_init\_\_.py
+
 ## 0.0.2 (2015/11/11)
 
  - Fix install
