@@ -1,15 +1,15 @@
 # Lector
 An API for your Kindle data.
 
-Python bindings are provided but any language that can run the javascript
+Python bindings are provided but any language that can run the JavaScript
 found in `api.py` from within a Kindle Cloud Reader session may easily access
 this data.
 
-### Dependecies
+### Dependencies
 **PhantomJS**:
 
-* OS X (Homebrew)
-    * ```brew install phantomjs```
+* macOS (Homebrew)
+    * ```brew install --cask phantomjs```
 * Ubuntu (at least 14.04)
     * Guide provided and maintained by @julionc
       [here](https://gist.github.com/julionc/7476620)
